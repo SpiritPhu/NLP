@@ -1,0 +1,406 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Dec 23 18:47:17 2020
+
+@author: phulh5
+"""
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from wordcloud import WordCloud , STOPWORDS, ImageColorGenerator
+import re
+
+#set view full rows
+pd.set_option('display.max_rows', 100)
+pd.set_option('display.max_columns', 100)
+
+
+train = pd.read_csv("G:/Python/Py_Code/NLP/train.csv")
+test = pd.read_csv("G:/Python/Py_Code/NLP/test.csv")
+
+Id = test.id
+
+train.shape #7613 rows and 5 columns
+
+train.head()
+
+train.info()
+
+#check null 
+train.isnull().sum()
+
+#check unique id
+len(set(train['id']))
+
+#simple visulization
+sns.countplot(train['target'])
+plt.show()
+print(train['target'].value_counts())
+
+#Check keywords
+sns.countplot(y = train.keyword, 
+              order = train['keyword'].value_counts().sort_values(ascending = False).iloc[0:20].index
+              )
+plt.title('Count of key words')
+plt.show() #Show the most frequency keywords
+
+#Count of keywords for disaster
+disastered_tweet = train.groupby('keyword')['target'].mean().sort_values(ascending = False).head(15)
+
+non_disastered_tweet = train.groupby('keyword')['target'].mean().sort_values(ascending = True).head(15)
+
+plt.figure(figsize = (8,5))
+sns.barplot(disastered_tweet, disastered_tweet.index)
+sns.barplot(non_disastered_tweet, non_disastered_tweet.index, color = 'orange')
+
+plt.title('Highest/ Lowest frequency keyword tweet')
+plt.show()
+
+#Check location
+sns.countplot(y = train.location,
+              order = train['location'].value_counts().sort_values(ascending = False).iloc[0:15].index)
+
+#Text processing
+
+train['text'][0]
+train['text'][789]
+
+#function to extract hashtag/link/tagged
+
+import re
+
+def created_feature(train):
+    train['hashtags'] = train['text'].apply(lambda x: " ".join([match.group(0)[1:] for match in re.finditer(r"#\w+", x)]) or 'no_hashtag')
+    train['tagged'] = train['text'].apply(lambda x: " ".join([match.group(0)[1:] for match in re.finditer(r"@\w+", x)]) or 'no_tagged')
+    train['link'] = train['text'].apply(lambda x:" ".join([match.group(0)[:] for match in re.finditer(r"https?://\S+", x)]) or 'no_link')
+    return train
+
+train = created_feature(train)
+test = created_feature(test)
+
+train.head()
+test.head()
+train['tagged'].value_counts().sort_values(ascending=False).iloc[0:10]
+train['link'].value_counts().sort_values(ascending=False).iloc[0:10]
+
+###Clean/Remove links/hashtag/break
+train['text'][417]
+re.sub(r'http://\S+','', train['text'][417])
+re.sub(r'\n',' ', a)
+re.sub('\s+', ' ', a).strip() 
+
+def func_clean_text (text):
+    text = re.sub(r'http://\S+','', text) #remove all links
+    text = re.sub(r'\n',' ', text) #remove breaks
+    text = re.sub('\s+',' ',text).strip() #removes any leading (spaces at the beginning) and trailing (spaces at the end) characters
+    return text
+
+train['text'][417]
+func_clean_text(train['text'][417])
+
+train['text_v1'] = train['text'].apply(lambda x: func_clean_text(x))
+test['text_v1'] = test['text'].apply(lambda x: func_clean_text(x))
+
+#############################################################
+###Feature Engineering#########
+############################################################
+from textblob import TextBlob
+from sklearn import model_selection, preprocessing, linear_model, naive_bayes, metrics
+from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
+from sklearn import decomposition, ensemble
+
+#Count Vectors
+import category_encoders as ce
+
+#target encoding
+features = ['keyword', 'location']
+encoder = ce.TargetEncoder(cols = features)
+encoder.fit(train[features], train['target']) #this equivalent to train.groupby(['features'])['target'].mean()
+
+train = train.join(encoder.transform(train[features]).add_suffix('_target'))
+test = test.join(encoder.transform(test[features]).add_suffix('_target'))
+
+from sklearn.feature_extraction.text import CountVectorizer
+
+#CountVectorizer
+#Links
+vec_links = CountVectorizer(min_df = 5, analyzer = 'word', token_pattern=r'http?://\S+')
+link_vec = vec_links.fit_transform(train['link'])
+link_vec_test = vec_links.transform(test['link'])
+X_train_link = pd.DataFrame(link_vec.toarray(), columns=vec_links.get_feature_names())
+X_test_link = pd.DataFrame(link_vec_test.toarray(), columns=vec_links.get_feature_names())
+
+# Tagged
+vec_tag = CountVectorizer(min_df = 5)
+tag_vec = vec_tag.fit_transform(train['tagged'])
+tag_vec_test = vec_tag.transform(test['tagged'])
+X_train_tag = pd.DataFrame(tag_vec.toarray(), columns=vec_tag.get_feature_names())
+X_test_tag = pd.DataFrame(tag_vec_test.toarray(), columns=vec_tag.get_feature_names())
+
+# Hashtags
+vec_hash = CountVectorizer(min_df = 5)
+hash_vec = vec_hash.fit_transform(train['hashtags'])
+hash_vec_test = vec_hash.transform(test['hashtags'])
+X_train_hash = pd.DataFrame(hash_vec.toarray(), columns=vec_hash.get_feature_names())
+X_test_hash = pd.DataFrame(hash_vec_test.toarray(), columns=vec_hash.get_feature_names())
+
+
+#TF- IDF
+from sklearn.feature_extraction.text import TfidfVectorizer
+
+vec_text = TfidfVectorizer(min_df = 10, ngram_range = (1,2), stop_words='english') 
+text_vec = vec_text.fit_transform(train['text'])
+text_vec_test = vec_text.transform(test['text'])
+X_train_text = pd.DataFrame(text_vec.toarray(), columns=vec_text.get_feature_names())
+X_test_text = pd.DataFrame(text_vec_test.toarray(), columns=vec_text.get_feature_names())
+print (X_train_text.shape)
+
+#Join full data
+train = train.join(X_train_link, rsuffix='_link')
+train = train.join(X_train_tag, rsuffix='_tagged')
+train = train.join(X_train_hash, rsuffix='_hashtag')
+train = train.join(X_train_text, rsuffix='_text')
+
+test = test.join(X_test_link, rsuffix='_link')
+test = test.join(X_test_tag, rsuffix='_mention')
+test = test.join(X_test_hash, rsuffix='_hashtag')
+test = test.join(X_test_text, rsuffix='_text')
+
+train.head()
+
+###############################################################################
+####### RUN MODEL #############################################################
+###############################################################################
+
+#Train_Test_Split
+
+from sklearn.model_selection import train_test_split
+
+train_x, test_x, train_y, test_y = train_test_split(train.drop(columns = ['id', 'keyword', 'location',
+                                                                          'text', 'target', 'hashtags', 'tagged', 'link', 'text_v1']), 
+                                                    train['target'],
+                                                    test_size = 0.3)
+
+train_x.shape
+test_x.shape
+
+###Model 1: Logistic Regression ###
+from sklearn.metrics import confusion_matrix
+from sklearn import linear_model
+
+logist = linear_model.LogisticRegression(solver = 'liblinear',
+                                         random_state= 777)
+
+logist_model = logist.fit(train_x, train_y)
+
+logist_predict = logist_model.predict(test_x)
+
+accuracy = model_selection.cross_val_score(logist_model,
+                                          test_x,
+                                          test_y,
+                                          cv=10).mean()
+
+print('Accuracy of Logistic Regression: ', accuracy)
+
+confusion_matrix(test_y,logist_predict)
+
+###Model 2: Naive Bayes ###
+nb= naive_bayes.MultinomialNB()
+nb_model = nb.fit(train_x, train_y)
+nb_pred = nb_model.predict(test_x)
+accuracy = model_selection.cross_val_score(nb_model,
+                                          test_x,
+                                          test_y,
+                                          cv=10).mean()
+print('Accuracy of Naive-Bayes: ', accuracy)
+
+confusion_matrix(test_y,nb_pred)
+
+###Model 3: Random Forest ###
+rf = ensemble.RandomForestClassifier()
+rf_model = rf.fit(train_x,train_y)
+rf_pred = rf.predict(test_x)
+accuracy = model_selection.cross_val_score(rf_model,
+                                          test_x,
+                                          test_y,
+                                          cv=10).mean()
+print('Accuracy of Random Forest: ', accuracy)
+
+confusion_matrix(test_y,rf_pred)
+
+
+###Model 4: XG Boost ###
+import xgboost
+xgb = xgboost.XGBClassifier()
+xgb_model = xgb.fit(train_x,train_y)
+xgb_pred = xgb_model.predict(test_x)
+accuracy = model_selection.cross_val_score(xgb_model,
+                                          test_x,
+                                          test_y,
+                                          cv=10).mean()
+print('Accuracy of XGBoost: ', accuracy)
+confusion_matrix(test_y,xgb_pred)
+
+
+###Model 5: Neuron network
+from sklearn.neural_network import MLPClassifier
+
+clf = MLPClassifier(hidden_layer_sizes= (2,2),
+                    activation = 'relu',
+                    solver = 'lbfgs',
+                    random_state=1)
+
+clf.fit(train_x, train_y)
+
+nn_prediction = clf.predict(test_x)
+
+confusion_matrix(test_y,nn_prediction)
+
+from dmba import classificationSummary
+classificationSummary(test_y, clf.predict(test_x))
+
+
+###Model 6: Neuron network on Keras
+
+
+######################################################
+#######Submission####################################
+######################################################
+
+columns = train_x.columns
+
+columns
+
+test = test.reindex(columns = columns, fill_value = 0)
+
+pre_final = logist_model.predict(test)
+
+submission = pd.DataFrame({"id": Id, "target": pre_final})
+
+
+
+
+
+
+
+#######################################################################################
+################################## OTHER CASE #########################################
+#######################################################################################
+
+#Xử lý url
+url_p0 = pd.read_csv("G:/Phu/Ad_hoc/URL/20201229_100507281/20201229_100507281_part_0.CSV",
+                     sep = '|')
+
+url_p0 = url_p0[['service_name', 'isdn', 'cat_lop_data', 'num_req']]
+
+url_p0_v1 = url_p0.groupby(['isdn', 'service_name', 'cat_lop_data']).agg({'num_req' : 'sum'})
+
+url_p0_v1 = url_p0_v1.reset_index()
+
+url_p0.query('isdn == 973379292')
+url_p0_v1.query('isdn == 973379292')
+
+
+aaa = url_p0.iloc[0:10000]
+
+aaa = aaa[['service_name', 'isdn', 'tong_luu_luong_mb', 'num_req']]
+
+bbb = aaa.groupby(['isdn', 'service_name']).agg({'tong_luu_luong_mb' : 'sum',
+                                               'num_req' : 'sum'})
+
+bbb = bbb.reset_index()
+
+bbb.service_name.unique()
+
+######
+
+vod = pd.read_csv("G:/Phu/FTTH_ANALYTICS/Data/HANH_VI_XEM_PHIM_QUA_STB/xem_ViettelTV_t11.csv")
+
+muagoi_p0 = pd.read_csv("G:/Phu/FTTH_ANALYTICS/Data/HANH_VI_XEM_PHIM_QUA_STB/20201229_100507513/1609228597068_20201229_100507513_part_0.CSV", sep='|')
+muagoi_p1 = pd.read_csv("G:/Phu/FTTH_ANALYTICS/Data/HANH_VI_XEM_PHIM_QUA_STB/20201229_100507513/1609228578993_20201229_100507513_part_1.CSV", sep='|')
+muagoi_p2 = pd.read_csv("G:/Phu/FTTH_ANALYTICS/Data/HANH_VI_XEM_PHIM_QUA_STB/20201229_100507513/1609228630268_20201229_100507513_part_2.CSV", sep='|')
+muagoi_p3 = pd.read_csv("G:/Phu/FTTH_ANALYTICS/Data/HANH_VI_XEM_PHIM_QUA_STB/20201229_100507513/1609228559761_20201229_100507513_part_3.CSV", sep='|')
+muagoi_p4 = pd.read_csv("G:/Phu/FTTH_ANALYTICS/Data/HANH_VI_XEM_PHIM_QUA_STB/20201229_100507513/1609228611251_20201229_100507513_part_4.CSV", sep='|')
+
+
+muagoi_p0['Tong'] = muagoi_p0['PHI_DK_GPRS_201130'] + muagoi_p0['PHI_THANG_GPRS_201130'] + muagoi_p0['TONG_CUOC_GOC_DP_201130'] + muagoi_p0['FIELD_8_201130']
+muagoi_p1['Tong'] = muagoi_p1['PHI_DK_GPRS_201130'] + muagoi_p1['PHI_THANG_GPRS_201130'] + muagoi_p1['TONG_CUOC_GOC_DP_201130'] + muagoi_p1['FIELD_8_201130']
+muagoi_p2['Tong'] = muagoi_p2['PHI_DK_GPRS_201130'] + muagoi_p2['PHI_THANG_GPRS_201130'] + muagoi_p2['TONG_CUOC_GOC_DP_201130'] + muagoi_p2['FIELD_8_201130']
+muagoi_p3['Tong'] = muagoi_p3['PHI_DK_GPRS_201130'] + muagoi_p3['PHI_THANG_GPRS_201130'] + muagoi_p3['TONG_CUOC_GOC_DP_201130'] + muagoi_p3['FIELD_8_201130']
+muagoi_p4['Tong'] = muagoi_p4['PHI_DK_GPRS_201130'] + muagoi_p4['PHI_THANG_GPRS_201130'] + muagoi_p4['TONG_CUOC_GOC_DP_201130'] + muagoi_p4['FIELD_8_201130']
+
+
+def func_case_when (muagoi_p4):
+    if muagoi_p4['Tong'] == 0:
+        return 0
+    else:
+        return 1
+
+muagoi_p4['muagoi'] = muagoi_p4.apply(func_case_when, axis = 1)
+
+muagoi_p0 = muagoi_p0[['ISDN_201130', 'muagoi']]
+muagoi_p1 = muagoi_p1[['ISDN_201130', 'muagoi']]
+muagoi_p2 = muagoi_p2[['ISDN_201130', 'muagoi']]
+muagoi_p3 = muagoi_p3[['ISDN_201130', 'muagoi']]
+muagoi_p4 = muagoi_p4[['ISDN_201130', 'muagoi']]
+
+muagoi_p0 = muagoi_p0.query('muagoi == 1')
+muagoi_p1 = muagoi_p1.query('muagoi == 1')
+muagoi_p2 = muagoi_p2.query('muagoi == 1')
+muagoi_p3 = muagoi_p3.query('muagoi == 1')
+muagoi_p4 = muagoi_p4.query('muagoi == 1')
+
+muagoi = pd.concat([muagoi_p0,muagoi_p1,muagoi_p2,muagoi_p3, muagoi_p4])
+
+muagoi.to_csv("G:/Phu/FTTH_ANALYTICS/Data/HANH_VI_XEM_PHIM_QUA_STB/TB_muagoi_t11.csv", index = False)
+
+vod.head()
+
+vod_v1 = vod
+
+vod_v1['isdn'] = vod_v1['User'].str[1:10]
+
+vod_v1.info()
+
+muagoi['ISDN_201130'] = muagoi.ISDN_201130.astype('str')
+
+vod_v1 = vod_v1.merge(muagoi,
+                      left_on = 'isdn',
+                      right_on = 'ISDN_201130',
+                      how = 'left')
+
+vod_v1.to_csv("G:/Phu/FTTH_ANALYTICS/Data/HANH_VI_XEM_PHIM_QUA_STB/Xem_ViettelTV_merge.csv", index = False)
+
+vod_v1['muagoi'] = vod_v1.muagoi.fillna(0)
+
+sns.countplot(vod_v1['Genre'])
+plt.title('xem Viettel TV và mua gói')
+plt.show()
+
+print(vod_v1.groupby('Genre')['isdn'].nunique())
+
+vod_genre = vod_v1.groupby('Genre').size().sort_values(ascending = False).head(15)
+plt.figure(figsize = (8,5))
+sns.barplot(vod_genre, vod_genre.index)
+plt.title('Thể loại ưa thích trên Viettel TV')
+
+vod_genre = vod_v1.groupby('Genre')['Duration (s)'].mean().sort_values(ascending = False).head(15)
+plt.figure(figsize = (8,5))
+sns.barplot(vod_genre, vod_genre.index, color = 'orange')
+plt.title('Thể loại có khán giả dành thời gian TB nhiều nhất trên Viettel TV')
+
+vod_genre_muagoi = vod_v1.query('muagoi == 0')
+vod_genre = vod_genre_muagoi.groupby('Genre')['Duration (s)'].mean().sort_values(ascending = False).head(15)
+plt.figure(figsize = (8,5))
+sns.barplot(vod_genre, vod_genre.index, color = 'orange')
+plt.title('Thể loại khán giả Không mua gói dành thời gian TB nhiều nhất trên Viettel TV')
+
+#wordcloud
+text = " ".join(i for i in vod_v1.Title)
+wc = WordCloud(background_color='white').generate(text)
+plt.imshow(wc, interpolation='bilinear')
+plt.axis('off')
+plt.tight_layout(pad = 0)
+plt.show()
