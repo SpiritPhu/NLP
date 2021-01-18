@@ -1,0 +1,199 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Mon Jan  4 08:19:36 2021
+
+@author: phulh5
+"""
+
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from wordcloud import WordCloud , STOPWORDS, ImageColorGenerator
+import re
+import underthesea
+from sklearn import svm
+from sklearn.externals import joblib
+
+#import library from local file source
+import sys
+sys.path.append("G:/Python/Py_Code/NLP_Vietnamese/underthesea-1.3.0")
+import underthesea
+from underthesea import word_tokenize
+
+###############################################################################
+#############SUMMARY OF TRAINING A NLP PROGRAM STEPS###########################
+###############################################################################
+
+#1. STEP 1: Crawling the data from website and labelling the data for each of record,
+########### For example: to label each record like Good/Neutral/Bad
+#2. STEP 2: Data Pre-processing - it contains some steps like remove stopwords, breaks, '.,;?~'
+#3. STEP 3: Tokenize the document, using Underthesea package for Vietnamese document
+#4. STEP 4: Ebmbedding the documents by TF_IDF(Term Frequency - Inverse Document Frequency)
+##########  This technique to evaluate the importance of a word in entire of document based on its apperance frequency.
+##########  A word with high score of TF-IDF means that it appears much in current document and low frequent in other documents
+#5. STEP 5: Train a model to classify like: SVM, Logistic, NN - ANN, RNN,...
+
+data_df = pd.read_csv('G:/Python/Py_Code/NLP_Vietnamese/MIAI_Lazada_Product_Review-master/data_crawler.csv')
+
+Id = data_df.reset_index()
+######Xóa dấu chấm/hỏi/phẩy cuối câu####################
+########################################################
+
+#Test:
+#data_df.head()
+#data_df['Text'][83]
+#re.sub(r"[\.,\?]+$-", "", data_df['Text'][83]).replace("?", " ").replace("!", " ").strip()
+#
+
+def clean_data_preparation(text): 
+    #remove stopword
+    #remove breaks, '.,?' at the end of a sentence
+    text = re.sub(r'[\.,\?]+$-', '', text)
+    #remove all punctuation in a sentence
+    text = text.replace(',', ' ').replace('.', ' ')\
+               .replace(';', ' ').replace('"', ' ')\
+               .replace('!', ' ').replace('?', ' ')\
+               .replace('-', ' ')
+    text = text.strip() #remove all break at the begining/end of sentence
+    return text
+
+#data_df['Text'][83]
+#clean_data_preparation(data_df['Text'][83])
+
+data_df['text_v1'] = data_df['Text'].apply(lambda x: clean_data_preparation(x))
+
+#tokenizer Text column
+from underthesea import word_tokenize
+def tokenizer(text):
+    return word_tokenize(text, format="text")
+
+data_df["Text_v2"] = data_df.text_v1.apply(tokenizer)
+
+############EMBEDDING BẰNG TFIDF#########################
+#########################################################
+from sklearn.feature_extraction.text import TfidfVectorizer
+
+vectorized_text = TfidfVectorizer(min_df = 5, #the word appears at least 5 times
+                                  max_df = 0.8, #the word appears less than 80% in all documents, more than 80% maybe stopwords
+                                  max_features = 3000,
+                                  sublinear_tf = True) #Apply sublinear tf scaling, i.e. replace tf with 1 + log(tf)
+
+data_df_vectorized = vectorized_text.fit_transform(data_df['text_v1'])
+data_df_text = pd.DataFrame(data_df_vectorized.toarray(), 
+                            columns = vectorized_text.get_feature_names())
+
+# Dev Function for Embeding 
+def embedding(X_train, X_test):
+    global  emb
+    emb = TfidfVectorizer(min_df=5, max_df=0.8,max_features=3000,sublinear_tf=True)
+    emb.fit(X_train)
+    X_train =  emb.transform(X_train)
+    X_test = emb.transform(X_test)
+
+    # Save pkl file
+    joblib.dump(emb, 'tfidf.pkl')
+    return X_train, X_test
+
+###############join full data
+data_df = data_df.join(data_df_text, rsuffix='_text')
+
+# 3. Convert to X_train, y_train
+from sklearn.model_selection import train_test_split
+
+X_train,X_test,y_train,y_test = train_test_split(data_df.drop(columns = ['Text', 'text_v1', 'Text_v2', 'Sentiment']),
+                                                 data_df['Sentiment'],
+                                                 test_size=0.2, random_state=42)
+
+# 4. Train and save model
+from sklearn.svm import SVC
+import sklearn
+
+model = sklearn.svm.SVC(kernel='linear', C = 1)
+model.fit(X_train,y_train)
+
+#Save Model
+from sklearn.externals import joblib
+joblib.dump(model, 'saved_model.pkl')
+
+# 5. Back-Test+
+
+columns = X_train.columns
+
+columns
+
+svm_predict = model.predict(X_test)
+
+submission = pd.DataFrame({"id": Id, "target": svm_predict})
+
+print("Model score=", model.score(X_test, y_test))
+print("Done")
+
+#####Back Test
+text = "đồ ăn ở đây vừa nhiều vừa ngon"
+
+text['text'] = text.apply(lambda x: clean_data_preparation(x))
+
+model.predict(text)
+##############################################################################################################
+#########################VALID NEW DATASET####################################################################
+##############################################################################################################
+
+valid_df = pd.read_csv("G:/Python/Py_Code/NLP_Vietnamese/Valid_data.txt",sep='\t', lineterminator='\r')
+
+#using function
+
+#1. Function 1
+def standardize_data(row):
+    # remove stopword
+
+    # Xóa dấu chấm, phẩy, hỏi ở cuối câu
+    row = re.sub(r"[\.,\?]+$-", "", row)
+    # Xóa tất cả dấu chấm, phẩy, chấm phẩy, chấm thang, ... trong câu
+    row = row.replace(",", " ").replace(".", " ") \
+        .replace(";", " ").replace("“", " ") \
+        .replace(":", " ").replace("”", " ") \
+        .replace('"', " ").replace("'", " ") \
+        .replace("!", " ").replace("?", " ") \
+        .replace("-", " ").replace("?", " ")
+
+    row = row.strip()
+    return row
+
+#2. Function2 :Tokenizer
+def tokenizer(row):
+    return word_tokenize(row, format="text")
+
+def analyze(result):
+    bad = np.count_nonzero(result)
+    good = len(result) - bad
+    print("No of bad and neutral comments = ", bad)
+    print("No of good comments = ", good)
+
+    if good>bad:
+        return "Good! You can buy it!"
+    else:
+        return "Bad! Please check it carefully!"
+    
+#3. function 3: embeding
+def embedding(X_train, X_test):
+    global  emb
+    emb = TfidfVectorizer(min_df=5, max_df=0.8,max_features=3000,sublinear_tf=True)
+    emb.fit(X_train)
+    X_train =  emb.transform(X_train)
+    X_test = emb.transform(X_test)
+
+    # Save pkl file
+    joblib.dump(emb, 'tfidf.pkl')
+    return X_train, X_test
+
+valid_df = pd.DataFrame(valid_df)
+valid_df['Text'] = valid_df['Text'].apply(lambda x: standardize_data(x)) #Clean
+valid_df['Text_v1'] = valid_df['Text'].apply(lambda x: tokenizer(x)) #Clean
+
+valid_df_vectorized = vectorized_text.fit_transform(valid_df['Text'])
+valid_df_text = pd.DataFrame(valid_df_vectorized.toarray(), 
+                            columns = vectorized_text.get_feature_names())
+
+result = model.predict(valid_df_text)
